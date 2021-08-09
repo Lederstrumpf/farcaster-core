@@ -44,7 +44,7 @@ rand_chacha = { version = "0.3.1", optional = true }
 bincode = { version = "1.3.3", optional = true }
 
 # blockchain specific
-bitcoin = "0.26"
+bitcoin = "0.27"
 monero = { version = "0.13" }
 
 [dev-dependencies]
