@@ -28,15 +28,16 @@ fn reverse_endianness(bytes: &[u8; 32]) -> [u8; 32] {
 
 // matches https://github.com/monero-project/monero/blob/9414194b1e47730843e4dbbd4214bf72d3540cf9/src/ringct/rctTypes.h#L454
 // i.e. hash-to-curve of G as in https://github.com/monero-project/mininero/blob/master/mininero.py#L305-L323
-// TODO: this is disgusting and must be removed asap
-#[allow(non_snake_case)]
-fn G_p() -> ed25519Point {
-    let hash_G = monero::cryptonote::hash::keccak_256(G.compress().as_bytes());
+lazy_static::lazy_static! {
+    static ref G_P: ed25519Point = {
+        #[allow(non_snake_case)]
+        let hash_G = monero::cryptonote::hash::keccak_256(G.compress().as_bytes());
 
-    ed25519PointCompressed::from_slice(&hash_G)
-        .decompress()
-        .unwrap()
-        .mul_by_cofactor() // should be in basepoint's subgroup, i.e. 8 * toPoint(hash_G)
+        ed25519PointCompressed::from_slice(&hash_G)
+            .decompress()
+            .unwrap()
+            .mul_by_cofactor() // should be in basepoint's subgroup, i.e. 8 * toPoint(hash_G)
+    };
 }
 
 #[cfg(feature = "experimental")]
@@ -68,21 +69,23 @@ fn _max_secp256k1() -> u256 {
 // https://crypto.stackexchange.com/a/25603
 // Matches the result here:
 // https://github.com/mimblewimble/rust-secp256k1-zkp/blob/caa49992ae67f131157f6341f4e8b0b0c1e53055/src/constants.rs#L79-L136
-// TODO: this is disgusting and must be removed asap (i.e. change to constant)
-#[allow(non_snake_case)]
-fn H_p() -> secp256k1Point {
-    let hash_H: [u8; 32] =
-        bitcoin_hashes::sha256::Hash::hash(&H.to_bytes_uncompressed()).into_inner();
-    let even_y_prepend_hash_H: [u8; 33] = [2u8]
-        .iter()
-        .chain(hash_H.iter())
-        .cloned()
-        .collect::<Vec<u8>>()
-        .try_into()
-        .unwrap();
-    secp256k1Point::from_bytes(even_y_prepend_hash_H).expect("Alternate basepoint is invalid")
-    // secp256k1Point::from_bytes([2, 80, 146, 155, 116, 193, 160, 73, 84, 183, 139, 75, 96, 53, 233, 122, 94, 7, 138, 90, 15, 40, 236, 150, 213, 71, 191, 238, 154, 206, 128, 58, 192])
-    // .expect("Alternate basepoint is invalid")
+lazy_static::lazy_static! {
+    static ref H_P: secp256k1Point = {
+        #[allow(non_snake_case)]
+        let hash_H: [u8; 32] =
+            bitcoin_hashes::sha256::Hash::hash(&H.to_bytes_uncompressed()).into_inner();
+        #[allow(non_snake_case)]
+        let even_y_prepend_hash_H: [u8; 33] = [2u8]
+            .iter()
+            .chain(hash_H.iter())
+            .cloned()
+            .collect::<Vec<u8>>()
+            .try_into()
+            .unwrap();
+        secp256k1Point::from_bytes(even_y_prepend_hash_H).expect("Alternate basepoint is invalid")
+        // secp256k1Point::from_bytes([2, 80, 146, 155, 116, 193, 160, 73, 84, 183, 139, 75, 96, 53, 233, 122, 94, 7, 138, 90, 15, 40, 236, 150, 213, 71, 191, 238, 154, 206, 128, 58, 192])
+        // .expect("Alternate basepoint is invalid")
+    };
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -103,8 +106,8 @@ impl From<(bool, usize)> for PedersenCommitment<ed25519Point, ed25519Scalar> {
         let order = u256::from(1u32) << index;
 
         let commitment = match bit {
-            false => blinder * G_p(),
-            true => G * ed25519Scalar::from_bits(order.to_le_bytes()) + blinder * G_p(),
+            false => blinder * *G_P,
+            true => G * ed25519Scalar::from_bits(order.to_le_bytes()) + blinder * *G_P,
         };
 
         PedersenCommitment {
@@ -121,8 +124,8 @@ impl From<(bool, usize, ed25519Scalar)> for PedersenCommitment<ed25519Point, ed2
         let order = u256::from(1u32) << index;
 
         let commitment = match bit {
-            false => blinder * G_p(),
-            true => G * ed25519Scalar::from_bits(order.to_le_bytes()) + blinder * G_p(),
+            false => blinder * *G_P,
+            true => G * ed25519Scalar::from_bits(order.to_le_bytes()) + blinder * *G_P,
         };
 
         PedersenCommitment {
@@ -144,9 +147,7 @@ impl From<(bool, usize)> for PedersenCommitment<secp256k1Point, secp256k1Scalar>
 
         let order_on_curve = secp256k1Scalar::from_bytes(order.to_be_bytes())
             .expect("integer greater than curve order");
-        #[allow(non_snake_case)]
-        let H_p = H_p();
-        let blinder_point = g!(blinder * H_p).mark::<NonZero>().unwrap();
+        let blinder_point = g!(blinder * H_P).mark::<NonZero>().unwrap();
 
         let commitment = match bit {
             true => g!(order_on_curve * H + blinder_point)
@@ -172,9 +173,7 @@ impl From<(bool, usize, secp256k1Scalar)> for PedersenCommitment<secp256k1Point,
         let order_on_curve = secp256k1Scalar::from_bytes(order.to_be_bytes())
             .expect("integer greater than curve order");
 
-        #[allow(non_snake_case)]
-        let H_p = H_p();
-        let blinder_point = g!(blinder * H_p);
+        let blinder_point = g!(blinder * H_P);
 
         let commitment = match bit {
             true => g!(order_on_curve * H + blinder_point)
@@ -273,16 +272,14 @@ fn verify_ring_sig(
     let order = u256::from(1u32) << index;
     let order_on_secp256k1 =
         secp256k1Scalar::from_bytes(order.to_be_bytes()).expect("integer greater than curve order");
-    #[allow(non_snake_case)]
-    let H_p = H_p();
 
     // compute e_1_i
     let e_1_i = {
-        let term2: [u8; 32] = *(ring_sig.a_1_i * G_p() - ring_sig.e_g_0_i * c_g_i)
+        let term2: [u8; 32] = *(ring_sig.a_1_i * *G_P - ring_sig.e_g_0_i * c_g_i)
             .compress()
             .as_bytes();
 
-        let term3: [u8; 33] = g!(ring_sig.b_1_i * H_p - ring_sig.e_h_0_i * c_h_i)
+        let term3: [u8; 33] = g!(ring_sig.b_1_i * H_P - ring_sig.e_h_0_i * c_h_i)
             .mark::<Normal>()
             .mark::<NonZero>()
             .expect("is zero")
@@ -295,12 +292,12 @@ fn verify_ring_sig(
 
     // compute e_0_i
     let e_0_i = {
-        let term2: [u8; 32] = *(ring_sig.a_0_i * G_p()
+        let term2: [u8; 32] = *(ring_sig.a_0_i * *G_P
             - e_g_1_i * (c_g_i - ed25519Scalar::from_bytes_mod_order(order.to_le_bytes()) * G))
             .compress()
             .as_bytes();
 
-        let term3: [u8; 33] = g!(ring_sig.b_0_i * H_p - e_h_1_i * (c_h_i - order_on_secp256k1 * H))
+        let term3: [u8; 33] = g!(ring_sig.b_0_i * H_P - e_h_1_i * (c_h_i - order_on_secp256k1 * H))
             .mark::<Normal>()
             .mark::<NonZero>()
             .expect("is zero")
@@ -357,11 +354,8 @@ impl
             false => secp256k1Scalar::one(),
         };
 
-        #[allow(non_snake_case)]
-        let H_p = H_p();
-
-        let term2_generated = *(j_i * G_p()).compress().as_bytes();
-        let term3_generated = g!(k_i * H_p).mark::<Normal>().to_bytes();
+        let term2_generated = *(j_i * *G_P).compress().as_bytes();
+        let term3_generated = g!(k_i * H_P).mark::<Normal>().to_bytes();
 
         // clippy insists it's better to avoid reuse like this ¯\_(ツ)_/¯
         let e_0_i = ring_hash(term0, term1, term2_generated, term3_generated);
@@ -383,10 +377,10 @@ impl
                 false => secp256k1Scalar::one(),
             };
 
-            let term2 = *(a_1_i * G_p() - e_g_0_i * c_g_i.commitment)
+            let term2 = *(a_1_i * *G_P - e_g_0_i * c_g_i.commitment)
                 .compress()
                 .as_bytes();
-            let term3 = g!(b_1_i * H_p - e_h_0_i * c_h_i.commitment)
+            let term3 = g!(b_1_i * H_P - e_h_0_i * c_h_i.commitment)
                 .mark::<Normal>()
                 .mark::<NonZero>()
                 .expect("is zero")
@@ -406,13 +400,13 @@ impl
             let order_on_secp256k1 = secp256k1Scalar::from_bytes(order.to_be_bytes())
                 .expect("integer greater than curve order");
 
-            let term2_calculated: [u8; 32] = *(a_0_i * G_p()
+            let term2_calculated: [u8; 32] = *(a_0_i * *G_P
                 - e_g_1_i * (c_g_i.commitment - ed25519Scalar::from_bits(order.to_le_bytes()) * G))
                 .compress()
                 .as_bytes();
 
             let term3_calculated: [u8; 33] =
-                g!(b_0_i * H_p - e_h_1_i * (c_h_i.commitment - order_on_secp256k1 * H))
+                g!(b_0_i * H_P - e_h_1_i * (c_h_i.commitment - order_on_secp256k1 * H))
                     .mark::<Normal>()
                     .mark::<NonZero>()
                     .expect("is zero")
@@ -451,13 +445,13 @@ impl
             let order_on_secp256k1 = secp256k1Scalar::from_bytes(order.to_be_bytes())
                 .expect("integer greater than curve order");
 
-            let term2 = *(a_0_i * G_p()
+            let term2 = *(a_0_i * *G_P
                 - e_g_1_i
                     * (c_g_i.commitment
                         - ed25519Scalar::from_bytes_mod_order(order.to_le_bytes()) * G))
                 .compress()
                 .as_bytes();
-            let term3 = g!(b_0_i * H_p - e_h_1_i * (c_h_i.commitment - order_on_secp256k1 * H))
+            let term3 = g!(b_0_i * H_P - e_h_1_i * (c_h_i.commitment - order_on_secp256k1 * H))
                 .mark::<Normal>()
                 .mark::<NonZero>()
                 .expect("is zero")
@@ -476,11 +470,11 @@ impl
                 .expect("is zero");
 
             // verification
-            let term2_calculated: [u8; 32] = *(a_1_i * G_p() - e_g_0_i * c_g_i.commitment)
+            let term2_calculated: [u8; 32] = *(a_1_i * *G_P - e_g_0_i * c_g_i.commitment)
                 .compress()
                 .as_bytes();
 
-            let term3_calculated: [u8; 33] = g!(b_1_i * H_p - e_h_0_i * c_h_i.commitment)
+            let term3_calculated: [u8; 33] = g!(b_1_i * H_P - e_h_0_i * c_h_i.commitment)
                 .mark::<Normal>()
                 .mark::<NonZero>()
                 .expect("is zero")
@@ -923,7 +917,7 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn alt_ed25519_generator_is_correct() {
-        assert_eq!(G_p(), monero::util::key::H.point.decompress().unwrap())
+        assert_eq!(*G_P, monero::util::key::H.point.decompress().unwrap())
     }
 
     #[test]
