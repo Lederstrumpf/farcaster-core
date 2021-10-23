@@ -515,8 +515,8 @@ impl
 #[derive(Clone, Debug, PartialEq)]
 #[allow(non_snake_case)]
 pub struct DLEQProof {
-    c_g: Vec<ed25519Point>,
-    c_h: Vec<secp256k1Point>,
+    pub c_g: Vec<ed25519Point>,
+    pub c_h: Vec<secp256k1Point>,
     ring_signatures: Vec<RingSignature<ed25519Scalar, secp256k1Scalar>>,
     pok_0: (ed25519Point, ed25519Scalar),
     pok_1: ecdsa_fun::Signature,
@@ -699,7 +699,7 @@ fn _zeroize_highest_bits(x: [u8; 32], highest_bit: usize) -> [u8; 32] {
 }
 
 impl DLEQProof {
-    pub(crate) fn generate(x: [u8; 32]) -> Self {
+    pub fn generate(x: [u8; 32]) -> Self {
         // convention: start count at 0
         let msb_index = 251;
 
@@ -782,7 +782,7 @@ impl DLEQProof {
         }
     }
 
-    pub(crate) fn verify(
+    pub fn verify(
         &self,
         #[allow(non_snake_case)] xG_p: ed25519Point,
         #[allow(non_snake_case)] xH_p: secp256k1Point,
